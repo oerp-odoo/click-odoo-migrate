@@ -5,6 +5,8 @@
 /.vscode
 pyrightconfig.json
 .venv
+src/odoo
+.tox_env
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
