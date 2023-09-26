@@ -26,7 +26,12 @@ module).
       PATH:  migration file or directory of migration files.
 
       Migration file must end with .py extension and must have 'migrate' function
-      that expects 'env' argument.
+      that expects 'env' and 'shared_data' argument.
+
+      'shared_data' argument is a dictionary that collects previous
+      migration scripts returned values (key is migration script name).
+      If return (of 'migrate' function) is None, it is not included in
+      shared_data.
 
     Options:
       -c, --config FILE          Specify the Odoo configuration file. Other ways

@@ -6,6 +6,17 @@ from click_odoo import OdooEnvironment
 from xodoo import migration
 
 
+def assert_mig_entries_count(cr, name, expected):
+    cr.execute(
+        """
+        SELECT count(*)
+        FROM xodoo_migration
+        WHERE name = %s""",
+        (name,),
+    )
+    assert cr.fetchone()[0] == expected
+
+
 def test_01_migrate_multiple_times(odoodb, path_test_data):
     # GIVEN
     path_mig_1 = path_test_data / "mig1"
@@ -22,20 +33,8 @@ def test_01_migrate_multiple_times(odoodb, path_test_data):
             path_mig_1 / "2022-02-20-titles.py",
         ]
         assert migrated_2 == []
-        cr.execute(
-            """
-            SELECT count(*)
-            FROM xodoo_migration
-            WHERE name = '2022-02-19-partners-companies'"""
-        )
-        assert cr.fetchone()[0] == 1
-        cr.execute(
-            """
-            SELECT count(*)
-            FROM xodoo_migration
-            WHERE name = '2022-02-20-titles'"""
-        )
-        assert cr.fetchone()[0] == 1
+        assert_mig_entries_count(cr, "2022-02-19-partners-companies", 1)
+        assert_mig_entries_count(cr, "2022-02-20-titles", 1)
         partners_cnt = env["res.partner"].search_count(
             [("name", "in", ("mig-partner-111", "mig-partner-222"))]
         )
@@ -56,20 +55,8 @@ def test_02_migrate_single_file(odoodb, path_test_data):
         migrated = migration.migrate(env, str(path_mig_file_1))
         # THEN
         assert migrated == [path_mig_file_1]
-        cr.execute(
-            """
-            SELECT count(*)
-            FROM xodoo_migration
-            WHERE name = '2022-02-19-partners-companies'"""
-        )
-        assert cr.fetchone()[0] == 1
-        cr.execute(
-            """
-            SELECT count(*)
-            FROM xodoo_migration
-            WHERE name = '2022-02-20-titles'"""
-        )
-        assert cr.fetchone()[0] == 0
+        assert_mig_entries_count(cr, "2022-02-19-partners-companies", 1)
+        assert_mig_entries_count(cr, "2022-02-20-titles", 0)
         partners_cnt = env["res.partner"].search_count(
             [("name", "in", ("mig-partner-111", "mig-partner-222"))]
         )
@@ -81,7 +68,37 @@ def test_02_migrate_single_file(odoodb, path_test_data):
         assert titles_cnt == 0
 
 
-def test_03_migrate_fail(odoodb, path_test_data):
+def test_03_migrate_with_shared_data(odoodb, path_test_data):
+    # GIVEN
+    path_mig_3 = path_test_data / "mig3"
+    # WHEN
+    with OdooEnvironment(database=odoodb, rollback=True) as env:
+        migrated = migration.migrate(env, str(path_mig_3))
+        # THEN
+        cr = env.cr
+        cr.execute("SELECT to_regclass('public.xodoo_migration')")
+        assert cr.fetchone()[0]
+        assert migrated == [
+            path_mig_3 / "01-partner-parent.py",
+            path_mig_3 / "02-partner-contact.py",
+            path_mig_3 / "03-partner-country.py",
+        ]
+        assert_mig_entries_count(cr, "01-partner-parent", 1)
+        assert_mig_entries_count(cr, "02-partner-contact", 1)
+        assert_mig_entries_count(cr, "03-partner-country", 1)
+        ResPartner = env["res.partner"]
+        partner_parent = ResPartner.search([("name", "=", "mig-partner-parent-111")])
+        assert len(partner_parent) == 1
+        assert partner_parent.is_company is True
+        assert partner_parent.country_id.code == "LT"
+        partner_contact = partner_parent.child_ids
+        assert len(partner_contact) == 1
+        assert partner_contact.is_company is False
+        assert partner_contact.name == "mig-partner-contact-222"
+        assert partner_contact.country_id.code == "LT"
+
+
+def test_04_migrate_fail(odoodb, path_test_data):
     # GIVEN
     path_mig_2 = path_test_data / "mig2"
     # WHEN
@@ -98,7 +115,7 @@ def test_03_migrate_fail(odoodb, path_test_data):
             assert env.ref("base.res_partner_category_11").name == "Services"
 
 
-def test_04_migrate_force(odoodb, path_test_data):
+def test_05_migrate_force(odoodb, path_test_data):
     # GIVEN
     path_mig_1 = path_test_data / "mig1"
     with OdooEnvironment(database=odoodb, rollback=True) as env:
@@ -126,7 +143,7 @@ def test_04_migrate_force(odoodb, path_test_data):
         assert titles_cnt == 0
 
 
-def test_05_migrate_with_cli_rollback(odoodb, odoocfg, path_test_data):
+def test_06_migrate_with_cli_rollback(odoodb, odoocfg, path_test_data):
     # GIVEN
     path_mig_1 = path_test_data / "mig1"
     # WHEN
@@ -173,7 +190,7 @@ def test_05_migrate_with_cli_rollback(odoodb, odoocfg, path_test_data):
 
 # This test is to always run last as it does not rollback transaction,
 # so we leave for odoodb fixter to clean up (by dropping db)
-def test_06_migrate_with_cli_commit(odoodb, odoocfg, path_test_data):
+def test_07_migrate_with_cli_commit(odoodb, odoocfg, path_test_data):
     # GIVEN
     path_mig_1 = path_test_data / "mig1"
     # WHEN
@@ -206,20 +223,8 @@ def test_06_migrate_with_cli_commit(odoodb, odoocfg, path_test_data):
         cr = env.cr
         cr.execute("SELECT to_regclass('public.xodoo_migration')")
         assert cr.fetchone()[0]
-        cr.execute(
-            """
-            SELECT count(*)
-            FROM xodoo_migration
-            WHERE name = '2022-02-19-partners-companies'"""
-        )
-        assert cr.fetchone()[0] == 1
-        cr.execute(
-            """
-            SELECT count(*)
-            FROM xodoo_migration
-            WHERE name = '2022-02-20-titles'"""
-        )
-        assert cr.fetchone()[0] == 1
+        assert_mig_entries_count(cr, "2022-02-19-partners-companies", 1)
+        assert_mig_entries_count(cr, "2022-02-20-titles", 1)
         partners_cnt = env["res.partner"].search_count(
             [("name", "in", ("mig-partner-111", "mig-partner-222"))]
         )
