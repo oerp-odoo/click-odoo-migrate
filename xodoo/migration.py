@@ -44,8 +44,13 @@ def main(env, path: str, force: list, sort_algorithm=DEFAULT_SORT_ALG):
 
     PATH:  migration file or directory of migration files.
 
-    Migration file must end with .py extension and must have 'migrate'
-    function that expects 'env' argument.
+    Migration file must end with .py extension and must have 'migrate' function
+    that expects 'env' and 'shared_data' argument.
+
+    'shared_data' argument is a dictionary that collects previous
+    migration scripts returned values (key is migration script name).
+    If return (of 'migrate' function) is None, it is not included in
+    shared_data.
     """
     if force:
         msg = ", ".join(force)
@@ -62,6 +67,7 @@ def migrate(
     mig_paths = do_sorted(parse_path(path, ext=MIG_EXT), sort_algorithm)
     init_migration_table(cr)
     migrated = []
+    shared_data = {}
     for mig_path in mig_paths:
         mig_name = mig_path.stem
         if mig_name in force:
@@ -69,7 +75,10 @@ def migrate(
         if is_migrated(cr, mig_name):
             continue
         print(f"Migrating: {mig_name}")
-        _migrate(env, mig_path)
+        res = _migrate(env, mig_path, shared_data)
+        # Share previous migration script data with others in line.
+        if res is not None:
+            shared_data[mig_name] = res
         migrated.append(mig_path)
     return migrated
 
@@ -91,15 +100,16 @@ def delete_migration_entry(cr, mig_name):
     cr.execute("DELETE FROM xodoo_migration WHERE name = %s", (mig_name,))
 
 
-def _migrate(env, path: Path):
+def _migrate(env, path: Path, shared_data: dict):
     module = load_script(path)
     try:
-        module.migrate(env)
+        res = module.migrate(env, shared_data)
     except Exception as e:
         raise click.ClickException(
             f"Something went wrong migrating '{path}': {e}"
         ) from e
     save_migration_ref(env.cr, path.stem)
+    return res
 
 
 def is_migrated(cr, name):
